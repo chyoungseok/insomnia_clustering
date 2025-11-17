@@ -1,0 +1,13 @@
+,1
+experiment_group,v02_100veclen_healthy_insomnia
+experiment_subgroup,D3_F4
+verbose,TRUE
+vector_len,100
+init_filter_num,4
+model_depth,3
+learning_rate,0.1
+is_lr_reducer,TRUE
+is_early_stop,TRUE
+loss,mse
+epochs,500
+batch_size,16
