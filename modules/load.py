@@ -365,31 +365,62 @@ def subject_inclusion(df, isi_upper=14, isi_lower=0, ahi_upper=14, ahi_lower=0, 
 
     return df_inclusion
 
-def load_scalograms(path_scalogram, df, resample_len=None, verbose=True):
+def load_scalograms(path_scalogram, df, resample_len=None, channel_mode='single', verbose=True, save_npy=False):
     df_demo = df.copy()
+
+    assert channel_mode in ['single', '6ch'], "channel_mode must be 'single' or '6ch'"
+    n_channels = 1 if channel_mode == 'single' else 6
 
     scalograms = []
     for id in tqdm(df_demo.index.to_list(), desc='     load scalograms'):
-        f = h5.File(os.path.join(path_scalogram, id+'.h5'), 'r')
-        scal = np.array(f['scalogram'])   
-        # choose C4
-        # shape = (16, 7, 1, 2000)
-        # 0 ~ 6: F3, F4, C3, C4, O1, O2, sleep stage
-        scal = scal[:, 1, :, :]
-        scalograms.append(scal)
-    
-    if not(timeLen_unity(scalograms)):
-        scalograms = resampling(list_data=scalograms, len_custom=resample_len)
-        scalograms = np.array(scalograms)
-        scalograms = scalograms.astype(np.float32)    
+        with h5.File(os.path.join(path_scalogram, id + '.h5'), 'r') as f:
+            # original shape: (16, 7, 1, T)
+            scal = np.array(f['scalogram'])
+
+            # single: first channel only (index 0)
+            # 6ch: first 6 channels (0~5), excluding sleep-stage channel
+            scal = scal[:, :n_channels, 0, :]  # -> (16, C, T)
+            scalograms.append(scal.astype(np.float32))
+
+    if len(scalograms) == 0:
+        return np.array([], dtype=np.float32)
+
+    if not timeLen_unity(scalograms):
+        print('run resampling...')
+        arr_time_len = [temp_data.shape[-1] for temp_data in scalograms]
+        if resample_len is None:
+            resample_len = int(np.median(arr_time_len))
+
+        resampled_data_list = []
+        for temp_data in scalograms:  # (16, C, T)
+            resized_ch_list = []
+            for ch_idx in range(temp_data.shape[1]):
+                resized = cv2.resize(
+                    temp_data[:, ch_idx, :],             # (16, T)
+                    (resample_len, 16),                  # (W, H)
+                    interpolation=cv2.INTER_NEAREST
+                )                                        # -> (16, resample_len)
+                resized_ch_list.append(resized)
+
+            # (16, resample_len, C)
+            temp_resampled = np.stack(resized_ch_list, axis=-1).astype(np.float32)
+            resampled_data_list.append(temp_resampled)
+
+        scalograms = np.array(resampled_data_list, dtype=np.float32)
     else:
-        scalograms = np.array(scalograms)
-        scalograms = scalograms.astype(np.float32)
-        scalograms = scalograms[:,:,0,:][:,:,:,np.newaxis]
-    
+        # (N, 16, C, T) -> (N, 16, T, C)
+        scalograms = np.array(
+            [np.transpose(temp_data, (0, 2, 1)) for temp_data in scalograms],
+            dtype=np.float32
+        )
+
     myPrint("INIT 9_Load Selected Scalograms", verbose=verbose)
+    myPrint("       Channel mode: {}".format(channel_mode), verbose=verbose)
     myPrint("       Shape of scalograms: {}".format(scalograms.shape), verbose=verbose)
 
+    if save_npy:
+        np.save(os.path.join(path_np_data, channel_mode, 'scalogram_2000t_16f_healthy_insomnia.npy'), scalograms)
+        myPrint("       Scalograms are saved to '%s'" % os.path.join(path_np_data, channel_mode, 'scalogram_2000t_16f_healthy_insomnia.npy'), verbose=verbose)  
     return scalograms
 
 def run_pipeline(path_scalogram, inclusion_option, fname_df_demo,  fname_scalogram, verbose=True):

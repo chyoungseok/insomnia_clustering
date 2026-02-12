@@ -52,7 +52,7 @@ def get_df_MR(df_demo=None, verbose=False):
 
     return df_regional_bai
 
-def gen_additional_scalogram_npy(verbose=False):
+def gen_additional_scalogram_npy(verbose=False, save_npy=True, channel_mode='6ch'):
     '''
     - path_np_data에, 'only_insomnia' subject에 해당하는 scalograms을 포함하는 numpy array 생성
     a) additional scalograms는 path_scalogram_w_MR에 .h5 형식으로 14개가 저장되어 있음
@@ -60,6 +60,7 @@ def gen_additional_scalogram_npy(verbose=False):
     b) (변경) ISI를 기준으로 insomnia 선택 (x), is_mr_scalo만 고려 (line 85)
     c) n=13에 해당하는 scalogram 만을 npy 형식으로 path_np_data에 저장
     '''
+    
     path_scalogram_w_MR = 'D:/USC/00_data/scalograms_with_MR'
     list_scalogram = os.listdir(path_scalogram_w_MR)
     id_scalogram = []
@@ -67,24 +68,27 @@ def gen_additional_scalogram_npy(verbose=False):
     for fname in list_scalogram:
         id = fname.split('.')[0]
         id_scalogram.append(id)
+    id_scalogram = np.array(id_scalogram)
 
     df_demo_mr = pd.DataFrame(index=id_scalogram)
-    # scalogram의 time axis가 2000 bin의 길이를 가지도록 resampling 하여 .h5 파일 로드
+
     print('\n ------ generating .npy scalograms which also provide MR features')
     print('     include all types of subject (healthy, insomnia ...)')
-    scalograms_mr = load.load_scalograms(path_scalogram = path_scalogram_w_MR,
-                                         df = df_demo_mr,
-                                         resample_len = 2000,
-                                         verbose=False)
+    scalograms_mr = load.load_scalograms(path_scalogram=path_scalogram_w_MR,
+                                        df=df_demo_mr,
+                                        resample_len=2000,
+                                        channel_mode=channel_mode,
+                                        verbose=True)
     print(' ------ generating done.')
+
+    # import matplotlib.pyplot as plt
+    # plt.imshow(scalograms_mr[1][:, :, 0], aspect='auto', origin='lower', cmap='hot')
 
     # ---- insomnia subject만 선택 start ---- #
     # (수정) df_MR에 있는 subject는 모두 insomnia 임
     df_MR = get_df_MR()
-    # df_MR_scalo_ins = df_MR.loc[(df_MR.ISI >= 15) & df_MR.is_mr_scalo, ]
     df_MR_scalo_ins = df_MR.loc[df_MR.is_mr_scalo, ] # 모두 insomnia 이므로 별도의 ISI 기준 적용 x, is_mr_scalo만 고려
 
-    id_scalogram = np.array(id_scalogram)
     arr_bool = [False] * len(id_scalogram)
     for i, id in enumerate(id_scalogram):
         if id in df_MR_scalo_ins['PSG#'].values:
@@ -99,11 +103,13 @@ def gen_additional_scalogram_npy(verbose=False):
 
     scalograms_mr = scalograms_mr[arr_bool] # scalogram numpy array에서 insomnia 환자만 선택
     # ---- insomnia subject만 선택 end ---- #
-
-    fname_scalogram = 'scalogram_%s_%s.npy' % (path_scalogram_w_MR.split('/')[-1],
-                                               "only_insomnia")
-    np.save(os.path.join(path_np_data, fname_scalogram), scalograms_mr)
-    print("\nSaved at %s" % os.path.join(path_np_data, fname_scalogram))
+    
+    if save_npy:
+        npy_fname = 'scalogram_scalograms_with_MR_only_insomnia.npy'
+        np.save(os.path.join(path_np_data, channel_mode, npy_fname), scalograms_mr)
+        if verbose:
+            print("\nSaving scalograms with MR features of only insomnia subjects as .npy file ... Successful !!")
+            print(" --> %s" % os.path.join(path_np_data, channel_mode, npy_fname))
 
 def get_id_with_MR_org_add(df_MR, verbose=False):
     " Get psg_id of subjects who provide both a scalogram and MR features"
