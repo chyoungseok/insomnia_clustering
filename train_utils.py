@@ -25,7 +25,7 @@ from tensorflow.keras.callbacks import (
     EarlyStopping,
 )
 
-from autoencoders import CAE_v02
+from modules.autoencoders import CAE_v02
 
 
 # ======================================================================
