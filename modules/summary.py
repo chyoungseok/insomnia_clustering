@@ -5,7 +5,7 @@ from tqdm.notebook import tqdm
 import matplotlib.pyplot as plt
 import pandas as pd
 from modules.utils import path_csv, path_main
-from modules import statistics, gen_df_MR, clustering, plot_with_statistic, gen_df_SNSB, pi_heatmap
+from modules import statistics, gen_df_MR, gen_df_SNSB
 
 set_features_1 = ['sex', 'age', 'BMI', 'AHI']
 set_features_2 = ['BDI', 'ESS', 'PSQI', 'SSS', 'ISI']
@@ -21,12 +21,13 @@ set_features_4 = ['sTST', 'ratio_TST', 'diff_TST', 'rd_TST', 'sSOL', 'ratio_SOL'
 # with open(os.path.join(path_main, '_clustering_zscore_by_HS.pkl'), 'rb') as f:
 #     _clustering = pickle.load(f)
     
-with open(os.path.join(path_main, '_clustering_v01.pkl'), 'rb') as f:
-    _clustering = pickle.load(f)
+# with open(os.path.join(path_main, '_clustering.pkl'), 'rb') as f:
+#     _clustering = pickle.load(f)
 
 class demo_summary():
-    def __init__(self, _clustering) -> None:
-        df_demo_HI_psm = statistics.get_df_demo_HI_psm(_clustering)
+    def __init__(self, df_demo_HI_psm=None) -> None:
+        if df_demo_HI_psm is None:
+            df_demo_HI_psm = pd.read_csv(os.path.join(path_csv, 'df_demo_HI_psm_updated_labels.csv'), encoding='euc-kr', index_col=0)
         df_stat_demo_psm_age_sex, dic_posthoc_p_psm_age_sex, dic_posthoc_str_psm_age_sex = statistics.gen_df_stat(df_demo_HI_psm, 'demo', ['age', 'sex'], force_lm_anova=False, posthoc_method="scheffe")
         statistics.show_number_each_cluster(df_demo_HI_psm)
 
@@ -57,9 +58,9 @@ class mr_summary():
             statistics.show_number_each_cluster(df_mr_bai_total_psm)
 
         # ======== Statistical Analysis
-        df_stat_bai_age_sex, dic_posthoc_p_age_sex, dic_posthoc_str_age_sex = statistics.gen_df_stat(df_mr_bai_total, df_type='bai', covariates=['age', 'sex'], p_correct_method=p_correct_method, posthoc_method=posthoc_method) 
-        df_stat_bai_psm_no_cov, dic_posthoc_p_psm_no_cov, dic_posthoc_str_psm_no_cov = statistics.gen_df_stat(df_mr_bai_total_psm, df_type='bai', covariates=[]) # no covariate
-        df_stat_bai_psm_age_sex, dic_posthoc_p_psm_age_sex, dic_posthoc_str_psm_age_sex = statistics.gen_df_stat(df_mr_bai_total_psm, df_type='bai', covariates=['age', 'sex'], posthoc_method=posthoc_method, p_correct_method=p_correct_method)
+        df_stat_bai_age_sex, dic_posthoc_p_age_sex, dic_posthoc_str_age_sex = statistics.gen_df_stat(df_mr_bai_total, df_type='bai', covariates=['age', 'sex'], force_lm_anova=False, p_correct_method=p_correct_method, posthoc_method=posthoc_method) 
+        df_stat_bai_psm_no_cov, dic_posthoc_p_psm_no_cov, dic_posthoc_str_psm_no_cov = statistics.gen_df_stat(df_mr_bai_total_psm, df_type='bai', covariates=[], force_lm_anova=False) # no covariate
+        df_stat_bai_psm_age_sex, dic_posthoc_p_psm_age_sex, dic_posthoc_str_psm_age_sex = statistics.gen_df_stat(df_mr_bai_total_psm, df_type='bai', covariates=['age', 'sex'], force_lm_anova=False, posthoc_method=posthoc_method, p_correct_method=p_correct_method)
 
         self.df_mr_bai_total = df_mr_bai_total
         self.list_ids_ins = list_ids_ins
@@ -95,8 +96,8 @@ class snsb_summary():
             statistics.show_number_each_cluster(df_SNSB_psm)
 
         # ======== Statistical Analysis
-        df_stat_SNSB_age_sex, dic_posthoc_p_age_sex , dic_posthoc_str_age_sex = statistics.gen_df_stat(df_SNSB, df_type='SNSB', covariates=['age', 'sex'], posthoc_method=posthoc_method, p_correct_method=p_correct_method)
-        df_stat_SNSB_psm_age_sex, dic_posthoc_p_psm_age_sex , dic_posthoc_str_psm_age_sex = statistics.gen_df_stat(df_SNSB_psm, df_type='SNSB', covariates=['age', 'sex'], posthoc_method=posthoc_method, p_correct_method=p_correct_method)
+        df_stat_SNSB_age_sex, dic_posthoc_p_age_sex , dic_posthoc_str_age_sex = statistics.gen_df_stat(df_SNSB, df_type='SNSB', covariates=['age', 'sex'], force_lm_anova=False, posthoc_method=posthoc_method, p_correct_method=p_correct_method)
+        df_stat_SNSB_psm_age_sex, dic_posthoc_p_psm_age_sex , dic_posthoc_str_psm_age_sex = statistics.gen_df_stat(df_SNSB_psm, df_type='SNSB', covariates=['age', 'sex'], force_lm_anova=False, posthoc_method=posthoc_method, p_correct_method=p_correct_method)
 
         self.df_SNSB = df_SNSB
         self.list_ids_ins = list_ids_ins
@@ -108,6 +109,6 @@ class snsb_summary():
         self.dic_posthoc_p_age_sex = dic_posthoc_p_age_sex
         self.dic_posthoc_str_psm_age_sex = dic_posthoc_str_psm_age_sex
 
-_demo_summary = demo_summary(_clustering)
-_mr_summary = mr_summary(_clustering)
-_snsb_summary = snsb_summary(_clustering)
+# _demo_summary = demo_summary(_clustering)
+# _mr_summary = mr_summary(_clustering)
+# _snsb_summary = snsb_summary(_clustering)

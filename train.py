@@ -4,9 +4,9 @@ import argparse
 import pandas as pd
 import numpy as np
 
-import train_utils
-import eval_utils
-from train_utils import path_csv, path_np_data, path_main
+import modules.train_utils as train_utils
+import modules.eval_utils as eval_utils
+from modules.train_utils import path_csv, path_np_data, path_main
 
 warnings.filterwarnings('ignore')
 
@@ -18,30 +18,27 @@ def get_df_experiment():
     """
     Load and preprocess experiment configuration CSV.
 
-    This function:
-        - Reads the experiment configuration CSV file.
-        - Converts boolean-like string entries to Python booleans.
-        - Casts predefined rows to string, integer, or float types.
-
     Returns
     -------
     pd.DataFrame
         Preprocessed experiment configuration table.
     """
     df = pd.read_csv(
-        os.path.join(path_csv, "00_experiments_12.csv"),
+        os.path.join(path_csv, "00_experiments_13_2ch.csv"),
         index_col=0
     )
 
     def cast_rows_to_dtype(row_names, dtype):
-        """Cast specific rows to a given dtype."""
-        df.loc[row_names] = df.loc[row_names].astype(dtype)
+        rows = [r for r in row_names if r in df.index]
+        if rows:
+            df.loc[rows] = df.loc[rows].astype(dtype)
 
     # Boolean rows
     bool_rows = ["is_lr_reducer", "is_early_stop", "verbose"]
-    df.loc[bool_rows] = df.loc[bool_rows].applymap(
-        lambda x: True if x == "TRUE" else False
-    )
+    if all(r in df.index for r in bool_rows):
+        df.loc[bool_rows] = df.loc[bool_rows].applymap(
+            lambda x: True if x == "TRUE" else False
+        )
 
     # String rows
     cast_rows_to_dtype(
@@ -49,16 +46,50 @@ def get_df_experiment():
     )
 
     # Integer rows
-    cast_rows_to_dtype(
-        ["vector_len", "init_filter_num", "model_depth", "epochs",
-         "batch_size"],
-        int
-    )
+    int_rows = [
+        "vector_len", "init_filter_num", "model_depth",
+        "epochs", "batch_size", "n_channels"
+    ]
+    cast_rows_to_dtype(int_rows, int)
 
     # Float rows
     cast_rows_to_dtype(["learning_rate"], float)
 
     return df
+
+
+def _normalize_scalogram_shape(arr, n_channels):
+    """
+    Normalize scalogram array to (N, 16, 2000, C).
+    """
+    arr = np.asarray(arr)
+
+    # Common legacy format: (N, F, C, T, 1)
+    if arr.ndim == 5 and arr.shape[-1] == 1:
+        arr = arr[..., 0]
+
+    if arr.ndim != 4:
+        raise ValueError(f"Unsupported scalogram ndim: {arr.ndim}, shape={arr.shape}")
+
+    # (N, F, T, C)
+    if arr.shape[1] == 16 and arr.shape[2] == 2000:
+        pass
+    # (N, F, C, T)
+    elif arr.shape[1] == 16 and arr.shape[3] == 2000:
+        arr = np.transpose(arr, (0, 1, 3, 2))
+    # (N, C, F, T)
+    elif arr.shape[2] == 16 and arr.shape[3] == 2000:
+        arr = np.transpose(arr, (0, 2, 3, 1))
+    else:
+        raise ValueError(f"Cannot infer axes for scalogram shape: {arr.shape}")
+
+    if arr.shape[-1] < n_channels:
+        raise ValueError(
+            f"Requested n_channels={n_channels}, but data has only {arr.shape[-1]} channels"
+        )
+
+    arr = arr[..., :n_channels]
+    return arr.astype(np.float32)
 
 
 # ======================================================================
@@ -76,64 +107,41 @@ def train_CAE(
     is_early_stop,
     loss,
     epochs,
-    batch_size
+    batch_size,
+    n_channels=6,
 ):
     """
     End-to-end training pipeline for a Convolutional Autoencoder (CAE).
-
-    This performs:
-        1. Loading scalogram data.
-        2. Initializing the CAE model.
-        3. Compiling the model with optimizer and loss.
-        4. Training the model.
-        5. Running evaluation (visualization + corr metrics).
-
-    Parameters
-    ----------
-    experiment_group : str
-        Name of experiment group (folder structure).
-    experiment_subgroup : str
-        Name of experiment subgroup (model identifier).
-    verbose : bool
-        Whether to print loading logs.
-    vector_len : int
-        Size of embedding vector.
-    init_filter_num : int
-        Number of initial convolution filters.
-    model_depth : int
-        Number of encoder/decoder blocks.
-    learning_rate : float
-        Initial learning rate.
-    is_lr_reducer : bool
-        Whether to apply ReduceLROnPlateau.
-    is_early_stop : bool
-        Whether to apply EarlyStopping.
-    loss : str
-        Loss function name.
-    epochs : int
-        Number of training epochs.
-    batch_size : int
-        Batch size.
     """
     # --------------------------------------------------------------
     # 1. Load data
     # --------------------------------------------------------------
     train_utils.save_json(
-        {"verbose": verbose},
+        {"verbose": verbose, "n_channels": int(n_channels)},
         experiment_group,
         experiment_subgroup,
         "load_params"
     )
+    
+    if n_channels == 1:
+        ch_mode = "single"
+    elif n_channels == 2:
+        ch_mode = "2ch"
+    elif n_channels == 6:
+        ch_mode = "6ch"
 
     scalograms = np.load(os.path.join(
-        path_np_data, "scalogram_2000t_16f_healthy_insomnia.npy"
+        path_np_data, ch_mode, "scalogram_2000t_16f_healthy_insomnia.npy"
     ))
     scalograms_MR = np.load(os.path.join(
-        path_np_data, "scalogram_scalograms_with_MR_only_insomnia.npy"
+        path_np_data, ch_mode, "scalogram_scalograms_with_MR_only_insomnia.npy"
     ))
 
+    scalograms = _normalize_scalogram_shape(scalograms, n_channels=n_channels)
+    scalograms_MR = _normalize_scalogram_shape(scalograms_MR, n_channels=n_channels)
+
     # Concatenate two datasets
-    scalograms = np.vstack((scalograms, scalograms_MR))
+    scalograms = np.concatenate((scalograms, scalograms_MR), axis=0)
     print(f"Shape of final scalograms: {scalograms.shape}")
 
     # --------------------------------------------------------------
@@ -141,9 +149,10 @@ def train_CAE(
     # --------------------------------------------------------------
     model_params = {
         "vector_len": vector_len,
-        "input_shape": (16, 2000, 1),
+        "input_shape": tuple(scalograms.shape[1:]),
         "init_filter_num": init_filter_num,
         "depth": model_depth,
+        "output_channels": int(n_channels),
     }
     train_utils.save_json(
         model_params, experiment_group, experiment_subgroup, "model_params"
@@ -197,7 +206,8 @@ def train_CAE(
         _input=scalograms,
         loss=loss,
         experiment_group=experiment_group,
-        experiment_subgroup=experiment_subgroup
+        experiment_subgroup=experiment_subgroup,
+        channel_idx=0,
     )
 
 
@@ -211,6 +221,8 @@ if __name__ == "__main__":
 
     df = get_df_experiment()
     df_train = df.loc["experiment_group":"batch_size", :]
+    if "n_channels" in df.index:
+        df_train = pd.concat([df_train, df.loc[["n_channels"], :]], axis=0)
 
     # Train for each experiment column
     for column in df.columns:

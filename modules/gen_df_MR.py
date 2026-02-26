@@ -78,6 +78,7 @@ def gen_additional_scalogram_npy(verbose=False, save_npy=True, channel_mode='6ch
                                         df=df_demo_mr,
                                         resample_len=2000,
                                         channel_mode=channel_mode,
+                                        save_npy=False,
                                         verbose=True)
     print(' ------ generating done.')
 

@@ -9,7 +9,7 @@ import seaborn as sns
 from modules.utils import path_csv
 from modules import load, summary
 
-df_demo_HI_psm = pd.read_csv(os.path.join(path_csv, 'df_demo_HI_psm.csv'), encoding="EUC-KR", index_col=0)
+df_demo_HI_psm = pd.read_csv(os.path.join(path_csv, 'df_demo_HI_psm_updated_labels_6ch.csv'), encoding="EUC-KR", index_col=0)
 
 class paraInsCriteria():    
     @staticmethod

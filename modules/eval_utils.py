@@ -2,7 +2,7 @@
 Evaluation utilities for Convolutional Autoencoder (CAE) models.
 
 This module provides:
-    - Loss & correlation history plotting
+    - Loss and correlation history plotting
     - Input vs reconstructed output visualization
     - Correlation distribution analysis (boxplot)
     - Model loading with encoder extraction
@@ -17,40 +17,20 @@ import tensorflow as tf
 import tensorflow.keras.backend as K
 from tensorflow.keras.models import load_model, Model
 
-from train_utils import path_main, custom_corr, corr_keras
+from modules.train_utils import path_main, custom_corr, corr_keras
 
 
 # ======================================================================
 # Visualization Helpers
 # ======================================================================
 def plot_acc_loss(H, experiment_group, experiment_subgroup, loss="mse"):
-    """
-    Plot training loss and correlation metric history.
-
-    Parameters
-    ----------
-    H : keras.callbacks.History
-        Training history object.
-    experiment_group : str
-        Name of experiment group.
-    experiment_subgroup : str
-        Model identifier.
-    loss : str
-        Loss function name.
-
-    Returns
-    -------
-    None
-    """
+    """Plot training loss and correlation history."""
     epochs = len(H.history[loss])
     num_subplot = 2
 
     plt.style.use("ggplot")
     plt.figure(figsize=(7 * num_subplot, 5))
 
-    # ----------------------------------------------------------
-    # 1. Loss plot
-    # ----------------------------------------------------------
     plt.subplot(1, num_subplot, 1)
     plt.plot(np.arange(epochs), H.history[loss], label="train_loss")
     plt.title(f"{loss}_{experiment_subgroup}", fontsize=15)
@@ -60,9 +40,6 @@ def plot_acc_loss(H, experiment_group, experiment_subgroup, loss="mse"):
     plt.yticks(fontsize=12)
     plt.legend(fontsize=12)
 
-    # ----------------------------------------------------------
-    # 2. Correlation plot
-    # ----------------------------------------------------------
     plt.subplot(1, num_subplot, 2)
     plt.plot(np.arange(epochs), H.history["corr_keras"], label="train_corr")
     plt.title(f"corr_{experiment_subgroup}", fontsize=15)
@@ -73,7 +50,6 @@ def plot_acc_loss(H, experiment_group, experiment_subgroup, loss="mse"):
     plt.legend(fontsize=12)
     plt.gca().yaxis.set_major_formatter(plt.FormatStrFormatter("%.2f"))
 
-    # Save result
     save_dir = os.path.join(path_main, f"results/{experiment_group}/plot_acc_loss")
     os.makedirs(save_dir, exist_ok=True)
     plt.savefig(os.path.join(save_dir, f"{experiment_subgroup}.png"))
@@ -81,18 +57,7 @@ def plot_acc_loss(H, experiment_group, experiment_subgroup, loss="mse"):
 
 
 def detail_modification(ax):
-    """
-    Apply consistent axis styling for scalogram plots.
-
-    Parameters
-    ----------
-    ax : matplotlib.axes.Axes
-        Axes object to modify.
-
-    Returns
-    -------
-    None
-    """
+    """Apply consistent axis styling for scalogram plots."""
     ax.set_ylabel("frequency [Hz]", fontsize=10)
     ax.set_xlabel("sleep period", fontsize=10)
     ax.yaxis.set_ticks(range(0, 16))
@@ -104,8 +69,35 @@ def detail_modification(ax):
     ax.grid(False)
 
 
+def _select_plot_channel(sample, channel_idx=0):
+    """
+    Convert one sample into a 2D map (freq x time) for plotting.
+    Supports single-channel and multi-channel samples.
+    """
+    s = np.asarray(sample)
+    s = np.squeeze(s)
+
+    if s.ndim == 2:
+        return s
+
+    if s.ndim != 3:
+        raise ValueError(f"Unsupported sample shape for plotting: {s.shape}")
+
+    # (freq, time, channel)
+    if s.shape[0] == 16 and s.shape[1] >= 100:
+        ch = min(channel_idx, s.shape[2] - 1)
+        return s[:, :, ch]
+
+    # (freq, channel, time)
+    if s.shape[0] == 16 and s.shape[2] >= 100:
+        ch = min(channel_idx, s.shape[1] - 1)
+        return s[:, ch, :]
+
+    raise ValueError(f"Cannot infer axes for plotting shape: {s.shape}")
+
+
 # ======================================================================
-# Input–Output Comparison
+# Input/Output Comparison
 # ======================================================================
 def plot_i_o_compare(
     inputs,
@@ -114,37 +106,10 @@ def plot_i_o_compare(
     experiment_subgroup,
     num_samples=5,
     title_input="input",
-    title_output="output"
+    title_output="output",
+    channel_idx=0,
 ):
-    """
-    Visualize comparison of input and reconstructed output scalograms.
-
-    Parameters
-    ----------
-    inputs : np.ndarray
-        Original scalograms.
-    outputs : np.ndarray
-        Reconstructed scalograms.
-    experiment_group : str
-        Group identifier.
-    experiment_subgroup : str
-        Experiment identifier.
-    num_samples : int
-        Number of samples to visualize.
-    title_input : str
-        Plot title for input.
-    title_output : str
-        Plot title for output.
-
-    Returns
-    -------
-    None
-    """
-    # Ensure shape compatibility (N, H, W, C)
-    if inputs.ndim < 4:
-        inputs = inputs[:, :, np.newaxis, :]
-        outputs = outputs[:, :, np.newaxis, :]
-
+    """Visualize comparison of input and reconstructed output scalograms."""
     inputs = inputs[:num_samples]
     outputs = outputs[:num_samples]
 
@@ -159,14 +124,15 @@ def plot_i_o_compare(
         ax_in = axes[0, i] if num_samples > 1 else axes[0]
         ax_out = axes[1, i] if num_samples > 1 else axes[1]
 
-        # Input plot
-        im_in = ax_in.imshow(inputs[i], cmap="hot", aspect=100, origin="lower")
-        ax_in.set_title(f"{title_input}_{i+1}", fontsize=15)
+        in_map = _select_plot_channel(inputs[i], channel_idx=channel_idx)
+        out_map = _select_plot_channel(outputs[i], channel_idx=channel_idx)
+
+        im_in = ax_in.imshow(in_map, cmap="hot", aspect=100, origin="lower")
+        ax_in.set_title(f"{title_input}_{i+1} (ch={channel_idx})", fontsize=15)
         detail_modification(ax_in)
         fig.colorbar(im_in, shrink=0.5, ax=ax_in)
 
-        # Output plot
-        im_out = ax_out.imshow(outputs[i], cmap="hot", aspect=100, origin="lower")
+        im_out = ax_out.imshow(out_map, cmap="hot", aspect=100, origin="lower")
         ax_out.set_title(f"{title_output}_{i+1} ({corr:.3f})", fontsize=15)
         detail_modification(ax_out)
         fig.colorbar(im_out, shrink=0.5, ax=ax_out)
@@ -181,27 +147,12 @@ def plot_i_o_compare(
 # Model Loader
 # ======================================================================
 def load_my_model(path_weight):
-    """
-    Load a trained CAE model and extract the encoder.
-
-    Parameters
-    ----------
-    path_weight : str
-        Path to the HDF5 weight file.
-
-    Returns
-    -------
-    aec : keras.Model
-        Full autoencoder model.
-    enc : keras.Model
-        Encoder network producing latent embedding.
-    """
+    """Load a trained CAE model and extract the encoder."""
     aec = load_model(
         path_weight,
         custom_objects={"corr_keras": corr_keras}
     )
 
-    # Extract encoder (layer named "embedding")
     enc = Model(
         inputs=aec.input,
         outputs=aec.get_layer("embedding").output
@@ -218,53 +169,20 @@ def eval_model(
     _input,
     loss,
     experiment_group,
-    experiment_subgroup
+    experiment_subgroup,
+    channel_idx=0,
 ):
-    """
-    Complete evaluation pipeline for a trained CAE model.
-
-    It performs:
-        1. Forward prediction
-        2. Input–output visualization
-        3. Correlation distribution (boxplot)
-        4. Training history plots
-
-    Parameters
-    ----------
-    H : keras.callbacks.History
-        Training history.
-    model : keras.Model
-        Trained CAE model.
-    _input : np.ndarray
-        Scalogram input.
-    loss : str
-        Loss function used.
-    experiment_group : str
-        Group identifier.
-    experiment_subgroup : str
-        Subgroup identifier.
-
-    Returns
-    -------
-    None
-    """
-    # ----------------------------------------------------------
-    # 1. Reconstruction prediction
-    # ----------------------------------------------------------
+    """Complete evaluation pipeline for a trained CAE model."""
     pred = model.predict(_input)
 
-    # ----------------------------------------------------------
-    # 2. Input–output comparison plots
-    # ----------------------------------------------------------
     plot_i_o_compare(
-        _input, pred,
+        _input,
+        pred,
         experiment_group,
-        experiment_subgroup
+        experiment_subgroup,
+        channel_idx=channel_idx,
     )
 
-    # ----------------------------------------------------------
-    # 3. Correlation distribution
-    # ----------------------------------------------------------
     median_corr, corr_list = custom_corr(_input, pred, median=True)
 
     plt.figure()
@@ -274,13 +192,13 @@ def eval_model(
         x=min(corr_list),
         y=-0.2,
         s=f"Mean corr = {np.mean(corr_list):.4f}",
-        fontsize=14
+        fontsize=14,
     )
     ax.text(
         x=min(corr_list),
         y=-0.1,
         s=f"Median corr = {np.median(corr_list):.4f}",
-        fontsize=14
+        fontsize=14,
     )
 
     save_dir = os.path.join(path_main, f"results/{experiment_group}/corr_boxplot")
@@ -288,12 +206,9 @@ def eval_model(
     plt.savefig(os.path.join(save_dir, f"{experiment_subgroup}.png"))
     plt.close()
 
-    # ----------------------------------------------------------
-    # 4. Training history plots
-    # ----------------------------------------------------------
     plot_acc_loss(
         H=H,
         experiment_group=experiment_group,
         experiment_subgroup=experiment_subgroup,
-        loss=loss
+        loss=loss,
     )

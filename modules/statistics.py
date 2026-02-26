@@ -41,12 +41,12 @@ def psm_matching(features: list, df_demo_HI: pd.DataFrame, merge_ins=True, multi
     if multi_N==1:
         psm1 = PsmPy(df_demo_HI_selected, treatment='new_labels', indx='PSG study Number#')
         psm1.logistic_ps(balance = True)
-        psm1.knn_matched(matcher='propensity_logit', replacement=False, caliper=None) # 기존 PSM
+        psm1.knn_matched(matcher='propensity_logit', replacement=False, caliper=None) # 疫꿸퀣??PSM
         matched_ids = psm1.matched_ids['matched_ID'].values
     else:
         psm1 = PsmPy(df_demo_HI_selected, treatment='new_labels', indx='PSG study Number#', seed=seed)
         psm1.logistic_ps(balance = True)
-        psm1.knn_matched_12n(matcher='propensity_logit', how_many=multi_N) # 변경된 PSM --> how_many를 이용해서 선택하는 sample 수 커스텀 가능
+        psm1.knn_matched_12n(matcher='propensity_logit', how_many=multi_N) # 癰궰野껋럥留?PSM --> how_many????곸뒠??곴퐣 ?醫뤾문??롫뮉 sample ???뚣끉??? 揶쎛??
         matched_ids = psm1.df_matched.loc[psm1.df_matched.new_labels==1, "PSG study Number#"].values
     # print(matched_ids)
 
@@ -58,19 +58,26 @@ def psm_matching(features: list, df_demo_HI: pd.DataFrame, merge_ins=True, multi
     return matched_ids
 
 
-def get_df_demo_HI_psm(_clustering):
-    # healthy와 insomnia를 모두 포함하는 df_demo 로드 (ISI score 기반)
+def get_df_demo_HI_psm():
+    # healthy?? insomnia??筌뤴뫀紐???釉??롫뮉 df_demo 嚥≪뮆諭?(ISI score 疫꿸퀡而?
     _load_HI = load._load(path_scalogram=None,
                         reset=False,
                         inclusion_option='healthy_insomnia',
                         verbose=True)
     df_demo_HI = _load_HI.df_demo
 
+    _load_INS = load._load(path_scalogram=None,
+                           reset=False,
+                           inclusion_option='only_insomnia',
+                           channel_mode='single',
+                           verbose=True)
+    df_demo_INS = _load_INS.df_demo
+
     # Add cluster labels of only_insomnia subjects using _clustering.df_demo
     df_demo_HI['labels'] = 2 # set the labels of healthy as '2'
-    df_demo_HI.loc[_clustering.df_demo.index, 'labels'] = _clustering.df_demo.labels # put labels from df_demo_I
+    df_demo_HI.loc[df_demo_INS.index, 'labels'] = 0 # put labels from df_demo_I
 
-    list_ids_ins = _clustering.df_demo.index.to_list()
+    list_ids_ins = df_demo_INS.index.to_list()
     list_ids_healthy_psm = list(psm_matching(features=["age", "sex"], df_demo_HI=df_demo_HI.copy(), multi_N=1))
 
     df_demo_HI_psm = df_demo_HI.loc[list_ids_ins + list_ids_healthy_psm, :].copy()
@@ -79,7 +86,7 @@ def get_df_demo_HI_psm(_clustering):
 
 class ancova():
     """
-    input으로 전달 받은 하나의 특정 feature에 대한 ANCOVA class
+    input??곗쨮 ?袁⑤뼎 獄쏆룇? ??롪돌???諭??feature??????ANCOVA class
     """
     def __init__(self, df, feature, covariates=['age', 'sex', 'AHI'], force_lm_anova=False, force_kruskal=False, force_normality=False, posthoc_method='scheffe'):
         new_covariates = []
@@ -121,19 +128,23 @@ class ancova():
 
         if self.normality:
             if self.homoscedasticity:
-                # 정규성 (O), 등분산성 (O) --> one way anova
-                F_ancova, p_ancova = lm_ancova(feature=self.feature, covariates=self.covariates, df=self.df)
+                # ?類?뇣??(O), ?源낇뀋?怨쀪쉐 (O) --> one way anova
+                F_ancova, p_ancova, partial_eta2 = lm_ancova(feature=self.feature, covariates=self.covariates, df=self.df)
                 self.type_anova = 'lm_ancova'
                 self.F_ancova = F_ancova
                 self.p_ancova = p_ancova
+                self.effect_3group = partial_eta2
+                self.effect_3group_type = 'partial_eta2'
             elif not(self.homoscedasticity):
-                # 정규성 (O), 등분산성 (x) --> welch anova
+                # ?類?뇣??(O), ?源낇뀋?怨쀪쉐 (x) --> welch anova
                 anova = welch_anova(dv=self.feature, between='labels', data=self.df)
                 self.type_anova = 'welch'
                 self.F_ancova = anova.loc[0, 'F']
-                self.p_ancova = anova.loc[0, 'p-unc']    
+                self.p_ancova = anova.loc[0, 'p-unc']
+                self.effect_3group = cal_welch_eta2(F=anova.loc[0, 'F'], ddof1=anova.loc[0, 'ddof1'], ddof2=anova.loc[0, 'ddof2'])
+                self.effect_3group_type = 'eta2_welch'
         else:
-            # 정규성 (x), 등분산성 (x) --> Kruskal test
+            # ?類?뇣??(x), ?源낇뀋?怨쀪쉐 (x) --> Kruskal test
             kruskal_test = stats.kruskal(df[df["labels"] == 0][self.feature],
                                          df[df["labels"] == 1][self.feature],
                                          df[df["labels"] == 2][self.feature])
@@ -141,13 +152,15 @@ class ancova():
             kruskal_test = [0, 1]
             com = 'kruskal_test = stats.kruskal(' + num_K*'self.list_data[%s],' % tuple(range(num_K)) + ')'
                 
-            lcls = locals() # exec를 통해 할당한 변수를 가져오기 위한 처리
+            lcls = locals() # exec?????퉸 ?醫딅뼣??癰궰??? 揶쎛?紐꾩궎疫??袁る립 筌ｌ꼶??
             exec(com, globals(), lcls)
             kruskal_test = lcls['kruskal_test']
 
             self.type_anova = 'kruskal'
             self.F_ancova = kruskal_test[0]
             self.p_ancova = kruskal_test[1]
+            self.effect_3group = cal_kruskal_epsilon2(H=kruskal_test[0], n_total=len(df), k_groups=len(self.list_data))
+            self.effect_3group_type = 'epsilon2_kruskal'
             
 
     def post_hoc(self):
@@ -160,11 +173,11 @@ class ancova():
         if self.normality:
             if self.homoscedasticity:
                 if check_uniform_length(self.list_data):
-                    # 정규성 (O), 등분산성 (O), equal sample size (O) --> Tukey's HSD
+                    # ?類?뇣??(O), ?源낇뀋?怨쀪쉐 (O), equal sample size (O) --> Tukey's HSD
                     p_posthoc = post_hoc_methods.posthoc_tukey_hsd(df=self.df, feature=self.feature)
                     type_posthoc = 'tukey'
                 else:
-                    # 정규성 (O), 등분산성 (O), equal sample size (X) --> Fisher, Scheffe, Bonferroni
+                    # ?類?뇣??(O), ?源낇뀋?怨쀪쉐 (O), equal sample size (X) --> Fisher, Scheffe, Bonferroni
                     if 'fisher' in self.posthoc_method:            
                         p_posthoc = post_hoc_methods.posthoc_fisher_lsd(df=self.df, feature=self.feature)
                         type_posthoc = 'fisher'
@@ -175,12 +188,12 @@ class ancova():
                         p_posthoc = post_hoc_methods.posthoc_bonferroni(df=self.df, feature=self.feature)
                         type_posthoc = 'bonferroni'
             else:
-                # 정규성 (O), 등분산성 (X) --> Games-Howell post hoc
+                # ?類?뇣??(O), ?源낇뀋?怨쀪쉐 (X) --> Games-Howell post hoc
                 p_posthoc = post_hoc_methods.posthoc_games_howell(df=self.df, feature=self.feature)
                 type_posthoc = 'games_howell'
             
         else:
-            # 정규성 (X) --> Kruskal-Wallis Test에 따른 post hoc 진행
+            # ?類?뇣??(X) --> Kruskal-Wallis Test???怨뺚뀲 post hoc 筌욊쑵六?
 
             # Dunn's Test
             dunn_test = sp.posthoc_dunn(df, feature, 'labels', p_adjust=None)
@@ -191,19 +204,40 @@ class ancova():
             conover_test = sp.posthoc_conover(a = df, val_col = feature, group_col = 'labels', p_adjust=None)
             conover_test = [conover_test.loc[0, 1], conover_test.loc[1, 2], conover_test.loc[0, 2]]
 
-            # Nemenyi 검정
+            # Nemenyi 野꺜??
             nemenyi_test = sp.posthoc_nemenyi(df, feature, 'labels')
             nemenyi_test = [nemenyi_test.loc[0, 1], nemenyi_test.loc[1, 2], nemenyi_test.loc[0, 2]]
 
             p_posthoc = p_posthoc_dunn
 
         self.p_posthoc = p_posthoc
+        if self.type_anova == 'kruskal':
+            self.pair_effect_posthoc = [
+                cal_cliffs_delta(df.loc[df['labels'] == 0, feature], df.loc[df['labels'] == 1, feature]),
+                cal_cliffs_delta(df.loc[df['labels'] == 1, feature], df.loc[df['labels'] == 2, feature]),
+                cal_cliffs_delta(df.loc[df['labels'] == 0, feature], df.loc[df['labels'] == 2, feature]),
+            ]
+            self.pair_effect_type = 'cliffs_delta'
+        elif self.type_anova == 'welch':
+            self.pair_effect_posthoc = [
+                cal_hedges_g(df.loc[df['labels'] == 0, feature], df.loc[df['labels'] == 1, feature]),
+                cal_hedges_g(df.loc[df['labels'] == 1, feature], df.loc[df['labels'] == 2, feature]),
+                cal_hedges_g(df.loc[df['labels'] == 0, feature], df.loc[df['labels'] == 2, feature]),
+            ]
+            self.pair_effect_type = 'hedges_g'
+        else:
+            self.pair_effect_posthoc = [
+                cal_cohens_d(df.loc[df['labels'] == 0, feature], df.loc[df['labels'] == 1, feature]),
+                cal_cohens_d(df.loc[df['labels'] == 1, feature], df.loc[df['labels'] == 2, feature]),
+                cal_cohens_d(df.loc[df['labels'] == 0, feature], df.loc[df['labels'] == 2, feature]),
+            ]
+            self.pair_effect_type = 'cohens_d'
         self.post_hoc_str = gen_post_hoc_str(self)
         self.type_posthoc = type_posthoc
 
 class categorical_ancova():
     def __init__(self, df, feature, covariates=['age', 'sex', 'AHI']): 
-        F_ancova, p_ancova = chi_square(feature, df)
+        F_ancova, p_ancova, effect_3group = chi_square(feature, df)
 
         new_covariates = []
         new_covariates = [covariate for covariate in covariates if not covariate == 'sex']
@@ -224,6 +258,8 @@ class categorical_ancova():
         self.type_anova = 'chi_square'
         self.F_ancova = F_ancova
         self.p_ancova = p_ancova
+        self.effect_3group = effect_3group
+        self.effect_3group_type = 'cramers_v'
         self.list_data = list_data
 
     def post_hoc(self):
@@ -237,22 +273,26 @@ class categorical_ancova():
 
         p_posthoc = []
         F_posthoc = []
+        pair_effect_posthoc = []
         for group1, group2 in comparisons:
-            # 두 그룹 데이터 필터링
+            # ??域밸챶竊??怨쀬뵠???袁り숲筌?
             df_filtered = df[df['labels'].isin([group1, group2])]
 
-            # 원-핫 인코딩으로 그룹 변수 처리
+            # ?????紐꾪맜??뱀몵嚥?域밸챶竊?癰궰??筌ｌ꼶??
             df_filtered = pd.get_dummies(df_filtered, columns=['labels'], drop_first=True)
 
-            # 로지스틱 회귀분석 모델 구성 및 적합
-            model = sm.Logit(df_filtered[self.feature], df_filtered[['labels_%d' % group2] + self.covariates])  # Group_B: A 대비 B 그룹, Age: 나이 공변량
+            # 嚥≪뮇???쎈뼓 ????브쑴苑?筌뤴뫀???닌딄쉐 獄??怨밸?
+            model = sm.Logit(df_filtered[self.feature], df_filtered[['labels_%d' % group2] + self.covariates])  # Group_B: A ????B 域밸챶竊? Age: ??륁뵠 ?⑤벉???
             result = model.fit(disp=0)
 
             p_posthoc.append(result.pvalues['labels_%d' % group2])
             F_posthoc.append(result.tvalues['labels_%d' % group2])
+            pair_effect_posthoc.append(np.exp(result.params['labels_%d' % group2]))
                 
         self.p_posthoc = p_posthoc
         self.F_posthoc = F_posthoc
+        self.pair_effect_posthoc = pair_effect_posthoc
+        self.pair_effect_type = 'odds_ratio'
         self.type_posthoc = 'logistic'
         self.post_hoc_str = gen_post_hoc_str(self)
 
@@ -283,15 +323,76 @@ def lm_ancova(feature: str, covariates: list, df: pd.DataFrame):
 
     F = anova_table.loc["C(labels)", "F"]
     p = anova_table.loc["C(labels)", "PR(>F)"]
+    ss_effect = anova_table.loc["C(labels)", "sum_sq"]
+    ss_error = anova_table.loc["Residual", "sum_sq"]
+    partial_eta2 = ss_effect / (ss_effect + ss_error)
 
-    return F, p
+    return F, p, partial_eta2
+
+def cal_cohens_d(group1: pd.Series, group2: pd.Series):
+    group1 = pd.to_numeric(group1, errors='coerce').dropna()
+    group2 = pd.to_numeric(group2, errors='coerce').dropna()
+    n1 = len(group1)
+    n2 = len(group2)
+    if (n1 < 2) or (n2 < 2):
+        return np.nan
+    sd1 = group1.std(ddof=1)
+    sd2 = group2.std(ddof=1)
+    pooled_var = ((n1 - 1) * (sd1 ** 2) + (n2 - 1) * (sd2 ** 2)) / (n1 + n2 - 2)
+    if pooled_var <= 0:
+        return np.nan
+    pooled_sd = np.sqrt(pooled_var)
+    return abs((group1.mean() - group2.mean()) / pooled_sd)
+
+def cal_hedges_g(group1: pd.Series, group2: pd.Series):
+    group1 = pd.to_numeric(group1, errors='coerce').dropna()
+    group2 = pd.to_numeric(group2, errors='coerce').dropna()
+    n1 = len(group1)
+    n2 = len(group2)
+    if (n1 < 2) or (n2 < 2):
+        return np.nan
+    d = cal_cohens_d(group1, group2)
+    if pd.isna(d):
+        return np.nan
+    df = n1 + n2 - 2
+    if df <= 0:
+        return np.nan
+    J = 1 - (3 / (4 * df - 1))
+    return abs(J * d)
+
+def cal_kruskal_epsilon2(H: float, n_total: int, k_groups: int):
+    if n_total <= k_groups:
+        return np.nan
+    return (H - k_groups + 1) / (n_total - k_groups)
+
+def cal_welch_eta2(F: float, ddof1: float, ddof2: float):
+    denominator = F * ddof1 + ddof2
+    if denominator <= 0:
+        return np.nan
+    return (F * ddof1) / denominator
+
+def cal_cliffs_delta(group1: pd.Series, group2: pd.Series):
+    group1 = pd.to_numeric(group1, errors='coerce').dropna()
+    group2 = pd.to_numeric(group2, errors='coerce').dropna()
+    n1 = len(group1)
+    n2 = len(group2)
+    if (n1 == 0) or (n2 == 0):
+        return np.nan
+    u_stat, _ = stats.mannwhitneyu(group1, group2, alternative='two-sided')
+    delta = (2 * u_stat) / (n1 * n2) - 1
+    return abs(delta)
 
 def chi_square(feature: str, df: pd.DataFrame):
     cross_tab = pd.crosstab(df['labels'], df[feature]) # 교차 표 생성
     chi2, p_value, dof, expected = chi2_contingency(cross_tab) # 카이 제곱 검정 수행
+    n_total = cross_tab.to_numpy().sum()
+    min_dim = min(cross_tab.shape[0] - 1, cross_tab.shape[1] - 1)
+    if (n_total == 0) or (min_dim <= 0):
+        effect_3group = np.nan
+    else:
+        effect_3group = np.sqrt(chi2 / (n_total * min_dim))
 
-    return chi2, p_value
-
+    return chi2, p_value, effect_3group
 def cal_mean_std(df: pd.DataFrame, feature: str):
     unique_labels = np.sort(df.labels.unique())
 
@@ -343,14 +444,13 @@ def get_significance_cross(pval):
     if pval>=0.05:
         return ('ns')
     elif (pval>=0.01) & (pval<0.05):
-        return ('✝')
+        return ('+')
     elif (pval>=0.001) & (pval<0.01):
-        return ('✝✝')
+        return ('++')
     else:
-        return ('✝✝✝')
-    
+        return ('+++')
 def inverse_inequality(ineqaulity: str):
-    if ',' in ineqaulity: # (수정) '.' --> ','
+    if ',' in ineqaulity: # (??륁젟) '.' --> ','
         return ineqaulity
     elif ' < ' in ineqaulity:
         return ' > '
@@ -369,7 +469,7 @@ def gen_post_hoc_str(_ancova):
 
     if not hasattr(_ancova, 'p_posthoc'):
         if hasattr(_ancova, 'p_ancova'): 
-            # two group 비교 class도 본 함수를 사용 가능하도록 하는 과정
+            # two group ??쑨??class??癰???λ땾??????揶쎛?館釉?袁⑥쨯 ??롫뮉 ?⑥눘??
             _ancova.p_posthoc = [_ancova.p_ancova]
 
     list_inequality = []
@@ -409,7 +509,9 @@ def gen_df_stat(df, df_type="demo", covariates=[], force_lm_anova=False, force_k
     df_type ('demo', 'thick', 'bai', 'snsb')
     """
     categorical_variables = ['sex', 'is_paradoxical_1', 'is_paradoxical_2', 'is_paradoxical_3', 'is_paradoxical_4']
-    stat_demo = pd.DataFrame(columns=['A', 'B', 'C', 'Statistic', 'F', 'p', ' ', 'Post hoc', 'type_posthoc'])
+    stat_demo = pd.DataFrame(columns=['A', 'B', 'C', 'Statistic', 'F', 'p', ' ', 'Post hoc', 'type_posthoc',
+                                      'effect_3group', 'effect_3group_type',
+                                      'effect_0_vs_1', 'effect_1_vs_2', 'effect_0_vs_2', 'effect_pair_type'])
 
     if 'demo' in df_type.lower():
         col_start = 2; col_end = -1
@@ -449,22 +551,33 @@ def gen_df_stat(df, df_type="demo", covariates=[], force_lm_anova=False, force_k
         stat_demo.loc[feature, 'Statistic'] = _ancova.type_anova[0].upper()
         stat_demo.loc[feature, 'F'] = _ancova.F_ancova
         stat_demo.loc[feature, 'p'] = _ancova.p_ancova
-        stat_demo.loc[feature, ' '] = get_significance_cross(_ancova.p_ancova) # significance 추가
+        stat_demo.loc[feature, ' '] = get_significance_cross(_ancova.p_ancova) # significance ?곕떽?
 
         stat_demo.loc[feature, 'Post hoc'] = replace_posthoc_str(_ancova.post_hoc_str)
         stat_demo.loc[feature, 'type_posthoc'] = _ancova.type_posthoc
+        pair_effect_posthoc = getattr(_ancova, 'pair_effect_posthoc', [np.nan, np.nan, np.nan])
+        stat_demo.loc[feature, 'effect_3group'] = getattr(_ancova, 'effect_3group', np.nan)
+        stat_demo.loc[feature, 'effect_3group_type'] = getattr(_ancova, 'effect_3group_type', '')
+        stat_demo.loc[feature, 'effect_0_vs_1'] = pair_effect_posthoc[0]
+        stat_demo.loc[feature, 'effect_1_vs_2'] = pair_effect_posthoc[1]
+        stat_demo.loc[feature, 'effect_0_vs_2'] = pair_effect_posthoc[2]
+        stat_demo.loc[feature, 'effect_pair_type'] = getattr(_ancova, 'pair_effect_type', '')
         dic_posthoc_p[feature] = _ancova.p_posthoc
         dic_posthoc_str[feature] = _ancova.post_hoc_str
 
     stat_demo['F'] = stat_demo['F'].apply(lambda x: f"{x:.2f}")
-    stat_demo['p'] = stat_demo['p'].apply(lambda x: f"{x:.3f}") # 'p' column에 대하여 특정 소수점 아래자리까지 보여지게 formatting
+    stat_demo['p'] = stat_demo['p'].apply(lambda x: f"{x:.3f}") # 'p' column??????뤿연 ?諭?????땾???袁⑥삋?癒?봺繹먮슣? 癰귣똻肉э쭪?野?formatting
 
+    stat_demo['effect_3group'] = pd.to_numeric(stat_demo['effect_3group'], errors='coerce').apply(lambda x: f"{x:.3f}" if pd.notna(x) else '')
+    stat_demo['effect_0_vs_1'] = pd.to_numeric(stat_demo['effect_0_vs_1'], errors='coerce').apply(lambda x: f"{x:.3f}" if pd.notna(x) else '')
+    stat_demo['effect_1_vs_2'] = pd.to_numeric(stat_demo['effect_1_vs_2'], errors='coerce').apply(lambda x: f"{x:.3f}" if pd.notna(x) else '')
+    stat_demo['effect_0_vs_2'] = pd.to_numeric(stat_demo['effect_0_vs_2'], errors='coerce').apply(lambda x: f"{x:.3f}" if pd.notna(x) else '')
     # ====== Correction for multiple comparison ======
-    # p-value 리스트
+    # p-value ?귐딅뮞??
     p_values = stat_demo['p'].astype(float)
 
     
-    # 본페로니 교정
+    # 癰귣챸?방에?뺣빍 ?대Ŋ??
     if 'bonf' in p_correct_method.lower():
         bonferroni_corrected = multipletests(p_values, alpha=0.05, method='bonferroni')
         stat_demo['p_corrected'] = bonferroni_corrected[1]
@@ -474,7 +587,7 @@ def gen_df_stat(df, df_type="demo", covariates=[], force_lm_anova=False, force_k
     # con2 = table_2.bonferroni_p >= 0.05
     # table_2.loc[con1 & con2,['HS', 'Para-I', 'Psy-I', 'Statistic', 'p', ' ', 'bonferroni_p', '  '] ]
 
-    # 홀름-본페로니 교정
+    # ????癰귣챸?방에?뺣빍 ?대Ŋ??
     elif 'holm' in p_correct_method.lower():
         holm_corrected = multipletests(p_values, alpha=0.05, method='holm')
         stat_demo['p_corrected'] = holm_corrected[1]
@@ -484,9 +597,9 @@ def gen_df_stat(df, df_type="demo", covariates=[], force_lm_anova=False, force_k
     # con2 = table_2.holm_p >= 0.05
     # table_2.loc[con1 & con2,['HS', 'Para-I', 'Psy-I', 'Statistic', 'p', ' ', 'holm_p', '  '] ]
 
-    # 벤저미니-호크버그 교정 (FDR correction)
-    # --> ESS의 유의성만 손실
-    # --> sSOL/SOL, (sSOL-SOL)/SOL 의 유의성만 손실
+    # 甕겹끉?沃섎챶???紐낃쾿甕곌쑨???대Ŋ??(FDR correction)
+    # --> ESS???醫롮벥?源낆춸 ?癒?뼄
+    # --> sSOL/SOL, (sSOL-SOL)/SOL ???醫롮벥?源낆춸 ?癒?뼄
     elif 'fdr' in p_correct_method.lower():
         bh_corrected = multipletests(p_values, alpha=0.05, method='fdr_bh')
         stat_demo['p_corrected'] = bh_corrected[1]
@@ -498,11 +611,11 @@ def gen_df_stat(df, df_type="demo", covariates=[], force_lm_anova=False, force_k
 
     stat_demo['p_corrected'] = stat_demo['p_corrected'].apply(lambda x: f"{x:.3f}")
     
-    # p value < 0.001 인 경우, '< 0.001'로 표기
+    # p value < 0.001 ??野껋럩?? '< 0.001'嚥???볥┛
     con_under_three_decimal = stat_demo.p_corrected.astype(float) < 0.001
     stat_demo.loc[con_under_three_decimal, 'p_corrected'] = '< 0.001'
 
-    # n 수 row 추가
+    # n ??row ?곕떽?
     stat_demo.loc['N', 'A'] = (df.labels==0).sum()
     stat_demo.loc['N', 'B'] = (df.labels==1).sum()
     stat_demo.loc['N', 'C'] = (df.labels==2).sum()
@@ -514,11 +627,20 @@ def gen_df_stat(df, df_type="demo", covariates=[], force_lm_anova=False, force_k
     stat_demo.loc['N', '  '] = ''
     stat_demo.loc['N', 'Post hoc'] = ''
     stat_demo.loc['N', 'type_posthoc'] = ''
+    stat_demo.loc['N', 'effect_3group'] = ''
+    stat_demo.loc['N', 'effect_3group_type'] = ''
+    stat_demo.loc['N', 'effect_0_vs_1'] = ''
+    stat_demo.loc['N', 'effect_1_vs_2'] = ''
+    stat_demo.loc['N', 'effect_0_vs_2'] = ''
+    stat_demo.loc['N', 'effect_pair_type'] = ''
     stat_demo = pd.concat([stat_demo.loc[['N'], :], stat_demo.iloc[:-1, :]])
-    stat_demo = stat_demo.loc[:, ['C', 'A', 'B', 'Statistic', 'p', 'p_corrected', '  ', 'Post hoc']]
+    stat_demo = stat_demo.loc[:, ['C', 'A', 'B', 'Statistic', 'p', 'p_corrected', '  ',
+                                  'effect_3group', 'effect_3group_type',
+                                  'effect_0_vs_1', 'effect_1_vs_2', 'effect_0_vs_2', 'effect_pair_type',
+                                  'Post hoc']]
 
-    # Sex mean값 표기
-    # - Male의 비율을 백분율로 표시 ex) 55
+    # Sex mean揶???볥┛
+    # - Male????쑴???獄쏄퉭???ㅼ쨮 ??뽯뻻 ex) 55
     if df_type != 'eeg':
         stat_demo = convert_sex_values_to_int_percentage(stat_demo, three_group=True)
 
@@ -533,7 +655,7 @@ def show_number_each_cluster(df):
     print("Non-para: %d" % (df.labels == 1).sum())
     print("GS (PI): %d" % (df.labels == 2).sum())
     
-    # ✅ 어디서 호출됐는지 전체 호출 스택 출력
+    # ????逾???紐꾪뀱?癒?뮉筌왖 ?袁⑷퍥 ?紐꾪뀱 ??쎄문 ?곗뮆??
     # print("\n[DEBUG] Call stack:")
     # traceback.print_stack()
     # print("\n")
@@ -564,7 +686,7 @@ def is_homoscedasticity(data: list):
     # com = 'homoscedasticity = stats.levene(' + num_K*'data[%s],' % tuple(range(num_K)) + ')[1] > 0.05'
     com = 'homoscedasticity = stats.bartlett(' + num_K*'data[%s],' % tuple(range(num_K)) + ')[1] > 0.05'
         
-    lcls = locals() # exec를 통해 할당한 변수를 가져오기 위한 처리
+    lcls = locals() # exec?????퉸 ?醫딅뼣??癰궰??? 揶쎛?紐꾩궎疫??袁る립 筌ｌ꼶??
     exec(com, globals(), lcls)
     homoscedasticity = lcls['homoscedasticity']
     
@@ -578,8 +700,8 @@ def is_enough_sample(list_data: list) -> bool:
 
 def rm_abnormal(df, feature):
     """
-    - dataframe(df)의 feature column에서 abnormal value 제거
-    - abnormal value의 종류는 'na', '-' 등 다양함
+    - dataframe(df)??feature column?癒?퐣 abnormal value ??볤탢
+    - abnormal value???ル굝履??'na', '-' ????쇰펶??
     """
     con_isna = df[feature].isna() 
     con_dot = df[feature]=='.'
@@ -601,10 +723,10 @@ def rm_abnormal(df, feature):
 
 class two_group_stat():
     """
-    input으로 전달 받은 하나의 특정 feature에 대한 ANCOVA class
+    input??곗쨮 ?袁⑤뼎 獄쏆룇? ??롪돌???諭??feature??????ANCOVA class
     """
     def __init__(self, df, feature, covariates=['age', 'sex', 'AHI'], force_mann=False, force_ttest=False, force_normality=False):
-        # feature와 covariate가 중복되지 않도록 함
+        # feature?? covariate揶쎛 餓λ쵎???? ??낅즲嚥???
         new_covariates = []
         for covariate in covariates:
             if not feature == covariate:
@@ -627,9 +749,9 @@ class two_group_stat():
         self.force_normality = force_normality
 
     def run(self):
-        # force_mann과 force_ttest가 서로 다른지 확인
+        # force_mann??force_ttest揶쎛 ??뺤쨮 ??삘뀲筌왖 ?類ㅼ뵥
         if all([self.force_mann, self.force_ttest]):
-            raise ValueError("force_mann와 force_ttest는 서로 다른 값을 가져야 합니다.")
+            raise ValueError("force_mann?? force_ttest????뺤쨮 ??삘뀲 揶쏅???揶쎛?紐꾨튊 ??몃빍??")
         
         if self.force_mann:
             self.normality = False
@@ -637,25 +759,25 @@ class two_group_stat():
             self.normality = True
 
         if self.normality:
-        # (예정) 정규성 만족하는 경우, t-test 진행
+        # (??됱젟) ?類?뇣??筌띾슣???롫뮉 野껋럩?? t-test 筌욊쑵六?
 
             t_statistic, p_value = ttest_ind(self.list_data[0], self.list_data[1])
 
             self.type_anova = 'T-test'
-            self.F_ancova = t_statistic # 이전에 작성된 함수와 form을 맞추기 위하여 F_ancova라는 변수 이름 사용
-            self.p_ancova = p_value # 이전에 작성된 함수와 form을 맞추기 위하여 p_ancova라는 변수 이름 사용
+            self.F_ancova = t_statistic # ??곸읈???臾믨쉐????λ땾?? form??筌띿쉸?쎿묾??袁る릭??F_ancova??곕뮉 癰궰????已?????
+            self.p_ancova = p_value # ??곸읈???臾믨쉐????λ땾?? form??筌띿쉸?쎿묾??袁る릭??p_ancova??곕뮉 癰궰????已?????
         else:
-            # 정규성을 만족하지 않는 경우, Mann-Whitney U Test 진행
+            # ?類?뇣?源놁뱽 筌띾슣???? ??낅뮉 野껋럩?? Mann-Whitney U Test 筌욊쑵六?
 
             u_statistic, p_value = mannwhitneyu(self.list_data[0], self.list_data[1])
 
             self.type_anova = 'Mann_Whitney'
-            self.F_ancova = u_statistic # 이전에 작성된 함수와 form을 맞추기 위하여 F_ancova라는 변수 이름 사용
-            self.p_ancova = p_value # 이전에 작성된 함수와 form을 맞추기 위하여 p_ancova라는 변수 이름 사용
+            self.F_ancova = u_statistic # ??곸읈???臾믨쉐????λ땾?? form??筌띿쉸?쎿묾??袁る릭??F_ancova??곕뮉 癰궰????已?????
+            self.p_ancova = p_value # ??곸읈???臾믨쉐????λ땾?? form??筌띿쉸?쎿묾??袁る릭??p_ancova??곕뮉 癰궰????已?????
 
 def gen_df_stat_two_group(df, df_type="demo", force_mann=False, force_ttest=False, force_normality=False, show_statistic=False):
     """
-    two group 통계 비교에 대한 df_stat을 생성하는 함수
+    two group ??????쑨???????df_stat????밴쉐??롫뮉 ??λ땾
     df_type ('demo', 'thick', 'bai', 'snsb')
     """
     categorical_variables = ['sex', 'is_paradoxical_1', 'is_paradoxical_2', 'is_paradoxical_3', 'is_paradoxical_4']
@@ -690,40 +812,40 @@ def gen_df_stat_two_group(df, df_type="demo", force_mann=False, force_ttest=Fals
         stat_demo.loc[feature, 'stat_method'] = _two_sample_test.type_anova[0].upper()
         stat_demo.loc[feature, 'statistic'] = _two_sample_test.F_ancova
         stat_demo.loc[feature, 'p'] = _two_sample_test.p_ancova
-        stat_demo.loc[feature, ' '] = get_significance_asterisk(_two_sample_test.p_ancova) # significance 추가
+        stat_demo.loc[feature, ' '] = get_significance_asterisk(_two_sample_test.p_ancova) # significance ?곕떽?
 
     stat_demo['statistic'] = stat_demo['statistic'].apply(lambda x: f"{x:.2f}")
-    stat_demo['p'] = stat_demo['p'].apply(lambda x: f"{x:.3f}") # 'p' column에 대하여 특정 소수점 아래자리까지 보여지게 formatting
+    stat_demo['p'] = stat_demo['p'].apply(lambda x: f"{x:.3f}") # 'p' column??????뤿연 ?諭?????땾???袁⑥삋?癒?봺繹먮슣? 癰귣똻肉э쭪?野?formatting
 
     # ====== Correction for multiple comparison ======
-    # p-value 리스트
+    # p-value ?귐딅뮞??
     p_values = stat_demo['p'].astype(float)
 
-    # 본페로니 교정
+    # 癰귣챸?방에?뺣빍 ?대Ŋ??
     bonferroni_corrected = multipletests(p_values, alpha=0.05, method='bonferroni')
     stat_demo['p_corrected'] = bonferroni_corrected[1]
     stat_demo['  '] = bonferroni_corrected[0]
     stat_demo['  '] = stat_demo['p_corrected'].apply(get_significance_asterisk)
     stat_demo['p_corrected'] = stat_demo['p_corrected'].apply(lambda x: f"{x:.3f}")
 
-    # # 홀름-본페로니 교정
+    # # ????癰귣챸?방에?뺣빍 ?대Ŋ??
     # holm_corrected = multipletests(p_values, alpha=0.05, method='holm')
     # table_1['holm_p'] = holm_corrected[1]
     # table_1['holm_significant'] = holm_corrected[0]
 
-    # 벤저미니-호크버그 교정 (FDR correction)
-    # --> ESS의 유의성만 손실
+    # 甕겹끉?沃섎챶???紐낃쾿甕곌쑨???대Ŋ??(FDR correction)
+    # --> ESS???醫롮벥?源낆춸 ?癒?뼄
     # bh_corrected = multipletests(p_values, alpha=0.05, method='fdr_bh')
     # stat_demo['p_corrected'] = bh_corrected[1]
     # stat_demo['  '] = bh_corrected[0]
     # stat_demo['  '] = stat_demo['p_corrected'].apply(get_significance_asterisk)
     # stat_demo['p_corrected'] = stat_demo['p_corrected'].apply(lambda x: f"{x:.3f}")
 
-    # p value < 0.001 인 경우, '< 0.001'로 표기
+    # p value < 0.001 ??野껋럩?? '< 0.001'嚥???볥┛
     con_under_three_decimal = stat_demo.p_corrected.astype(float) < 0.001
     stat_demo.loc[con_under_three_decimal, 'p_corrected'] = '< 0.001'
 
-    # n 수 row 추가
+    # n ??row ?곕떽?
     stat_demo.loc['N', 'A'] = (df.labels==0).sum()
     stat_demo.loc['N', 'B'] = (df.labels==1).sum()
     stat_demo.loc['N', 'stat_method'] = ''
@@ -746,8 +868,8 @@ def gen_df_stat_two_group(df, df_type="demo", force_mann=False, force_ttest=Fals
 
 
 def check_uniform_length(lists: list):
-    # 내부 리스트들의 길이를 취득하여 set으로 변환
-    # 모든 길이가 같다면 set의 길이는 1일 것
+    # ??? ?귐딅뮞?紐껊굶??疫뀀챷?좂몴??띯뫀諭??뤿연 set??곗쨮 癰궰??
+    # 筌뤴뫀諭?疫뀀챷?졾첎? 揶쏆늾?롳쭖?set??疫뀀챷???1??野?
     return len(set(len(sublist) for sublist in lists)) == 1
 
 def replace_posthoc_str(posthoc_str: str):
@@ -786,8 +908,8 @@ def convert_sex_values_to_int_percentage(df: pd.DataFrame, three_group=True):
 
 def merge_N_Male(group_num, df_stat: pd.DataFrame, list_groups=None):
     """
-    기존 df_stat에서는 N수와 Male % index가 따로 분리되어 있었음. 
-    이를 합치는 함수
+    疫꿸퀣??df_stat?癒?퐣??N??? Male % index揶쎛 ?怨뺤쨮 ?브쑬???뤿선 ??됰??? 
+    ??? ??뱁뒄????λ땾
     """
     
     if isinstance(list_groups, type(None)):
@@ -796,8 +918,8 @@ def merge_N_Male(group_num, df_stat: pd.DataFrame, list_groups=None):
         elif group_num == 3:
             list_groups = ["HS", "Subtype 1 (PDI)", "Subtype 2 (PPI)"]
     
-    df_stat_N_Male = df_stat.loc[['N', 'Male, %'], :]  # [N, Male] index만 미리 따로 추출
-    df_stat_N_Male.loc["N (male, %)", :] = '' # "N (male, %)" 라는 새로운 index를 생성하고, 모든 column의 값을 빈 값으로 초기화
+    df_stat_N_Male = df_stat.loc[['N', 'Male, %'], :]  # [N, Male] index筌?沃섎챶???怨뺤쨮 ?곕뗄??
+    df_stat_N_Male.loc["N (male, %)", :] = '' # "N (male, %)" ??곕뮉 ??덉쨮??index????밴쉐??랁? 筌뤴뫀諭?column??揶쏅?????揶쏅??앮에??λ뜃由??
     for group in list_groups:
         df_stat_N_Male.loc["N (male, %)", group] = "%d (%d)" %  (df_stat_N_Male.loc["N", group], df_stat_N_Male.loc["Male, %", group])
 

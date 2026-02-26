@@ -2,3 +2,4 @@ model_weights/*
 results/*
 data/*
 csv_files/*
+*.pkl

@@ -9,7 +9,7 @@ from modules.utils import path_csv, path_np_data
 from modules.utils import myPrint
 
 class _load():    
-    def __init__(self, path_scalogram=None, reset=False, inclusion_option='only_insomnia', verbose=True, include_MR='no_use'):
+    def __init__(self, path_scalogram=None, reset=False, inclusion_option='only_insomnia', channel_mode='6ch', verbose=True, include_MR='no_use'):
 
         # ****assert zone*****************
         assert inclusion_option in ['healthy', 'only_insomnia', 'healthy_insomnia', 'only_insomnia_isi10']
@@ -17,22 +17,22 @@ class _load():
         
         if path_scalogram == None:
             path_scalogram = 'D:/USC/00_data/scalograms/2000t_16f'
-        
+
         fname_scalogram = 'scalogram_%s_%s.npy' % (path_scalogram.split('/')[-1], inclusion_option)
         fname_df_demo = "df_demo_%s_%s.csv" % (path_scalogram.split('/')[-1], inclusion_option)
-
 
         if reset:
             df_demo, scalograms, df_demo_pre_exclusion = run_pipeline(path_scalogram=path_scalogram,
                                                                       inclusion_option=inclusion_option,
                                                                       fname_df_demo=fname_df_demo,
                                                                       fname_scalogram=fname_scalogram,
+                                                                      channel_mode=channel_mode,
                                                                       verbose=verbose)
         
         else:
-            if (fname_df_demo in os.listdir(path_csv)) & (fname_scalogram in os.listdir(path_np_data)):
+            if (fname_df_demo in os.listdir(path_csv)) & (fname_scalogram in os.listdir(os.path.join(path_np_data, channel_mode))):
                 df_demo = pd.read_csv(os.path.join(path_csv, fname_df_demo), index_col=0, encoding="EUC-KR")
-                scalograms = np.load(os.path.join(path_np_data, fname_scalogram))
+                scalograms = np.load(os.path.join(path_np_data, channel_mode, fname_scalogram))
                 myPrint("Load '%s' and '%s' %s" % (fname_df_demo, fname_scalogram, scalograms.shape ))
             
             else:
@@ -40,6 +40,7 @@ class _load():
                                                                           inclusion_option=inclusion_option,
                                                                           fname_df_demo=fname_df_demo,
                                                                           fname_scalogram=fname_scalogram,
+                                                                          channel_mode=channel_mode,
                                                                           verbose=verbose)
         
         self.df_demo = df_demo
@@ -365,11 +366,20 @@ def subject_inclusion(df, isi_upper=14, isi_lower=0, ahi_upper=14, ahi_lower=0, 
 
     return df_inclusion
 
-def load_scalograms(path_scalogram, df, resample_len=None, channel_mode='single', verbose=True, save_npy=False):
+def load_scalograms(path_scalogram, df, resample_len=None, inclusion_option=None, channel_mode='single', verbose=True, save_npy=False):
     df_demo = df.copy()
 
-    assert channel_mode in ['single', '6ch'], "channel_mode must be 'single' or '6ch'"
-    n_channels = 1 if channel_mode == 'single' else 6
+    assert channel_mode in ['single', '2ch', '6ch'], "channel_mode must be 'single', '2ch', or '6ch'"
+    
+    if channel_mode == 'single':
+        myPrint("INIT 9_Load Selected Scalograms (Channel mode: single)", verbose=verbose)
+        n_channels = 1
+    elif channel_mode == '2ch':
+        myPrint("INIT 9_Load Selected Scalograms (Channel mode: 2ch)", verbose=verbose)
+        n_channels = 2
+    elif channel_mode == '6ch':
+        myPrint("INIT 9_Load Selected Scalograms (Channel mode: 6ch)", verbose=verbose)
+        n_channels = 6
 
     scalograms = []
     for id in tqdm(df_demo.index.to_list(), desc='     load scalograms'):
@@ -419,11 +429,11 @@ def load_scalograms(path_scalogram, df, resample_len=None, channel_mode='single'
     myPrint("       Shape of scalograms: {}".format(scalograms.shape), verbose=verbose)
 
     if save_npy:
-        np.save(os.path.join(path_np_data, channel_mode, 'scalogram_2000t_16f_healthy_insomnia.npy'), scalograms)
-        myPrint("       Scalograms are saved to '%s'" % os.path.join(path_np_data, channel_mode, 'scalogram_2000t_16f_healthy_insomnia.npy'), verbose=verbose)  
+        np.save(os.path.join(path_np_data, channel_mode, f'scalogram_2000t_16f_{inclusion_option}.npy'), scalograms)
+        myPrint("       Scalograms are saved to '%s'" % os.path.join(path_np_data, channel_mode, f'scalogram_2000t_16f_{inclusion_option}.npy'), verbose=verbose)  
     return scalograms
 
-def run_pipeline(path_scalogram, inclusion_option, fname_df_demo,  fname_scalogram, verbose=True):
+def run_pipeline(path_scalogram, inclusion_option, fname_df_demo,  fname_scalogram, channel_mode='6ch',verbose=True):
     # 1. Init df_demo =================================================
     df_demo = init_df_demo(verbose=verbose)
 
@@ -453,7 +463,7 @@ def run_pipeline(path_scalogram, inclusion_option, fname_df_demo,  fname_scalogr
     df_demo = subject_inclusion(df_demo, inclusion_option=inclusion_option, verbose=verbose)
 
     # 9. Load Scalograms ==============================================
-    scalograms = load_scalograms(path_scalogram, df_demo, verbose=verbose)
+    scalograms = load_scalograms(path_scalogram, df_demo, channel_mode=channel_mode, verbose=verbose)
 
     df_demo.to_csv(os.path.join(path_csv, fname_df_demo), encoding="EUC-KR")
     np.save(os.path.join(path_np_data, fname_scalogram), scalograms)
