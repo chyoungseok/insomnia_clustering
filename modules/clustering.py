@@ -55,7 +55,7 @@ def get_scalo_hs(channel_mode="6ch"):
     print(f"Load healthy+insomnia scalograms from: {loaded_path}")
 
     df_demo = pd.read_csv('D:/USC/01_code/insomnia_clustering/csv_files/df_demo_2000t_16f_healthy_insomnia.csv', encoding='euc-kr') # index_col=0 금지
-    df_demo_psm = statistics.get_df_demo_HI_psm()
+    df_demo_psm = statistics.get_df_demo_HI_psm().reset_index()
     
     psgid_HS = df_demo_psm.loc[df_demo_psm.labels == 2, 'PSG study Number#'].values
     con_HS = df_demo['PSG study Number#'].isin(psgid_HS)
@@ -131,7 +131,7 @@ class class_clustering:
             
         # udate and save df_demo_HI_psm by adding new labels (여기)
         df_demo_HI_psm = statistics.get_df_demo_HI_psm()
-        df_demo_HI_psm_updated = df_demo_HI_psm.copy()
+        df_demo_HI_psm_updated = df_demo_HI_psm.copy().reset_index()
         
         for idx in df_demo.index:
             con = df_demo_HI_psm_updated['PSG study Number#'].isin([idx])

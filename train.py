@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore')
 # ======================================================================
 # Utility Functions
 # ======================================================================
-def get_df_experiment():
+def get_df_experiment(csv_filename):
     """
     Load and preprocess experiment configuration CSV.
 
@@ -24,7 +24,7 @@ def get_df_experiment():
         Preprocessed experiment configuration table.
     """
     df = pd.read_csv(
-        os.path.join(path_csv, "00_experiments_13_2ch.csv"),
+        os.path.join(path_csv, csv_filename),
         index_col=0
     )
 
@@ -158,6 +158,7 @@ def train_CAE(
         model_params, experiment_group, experiment_subgroup, "model_params"
     )
     model = train_utils.init_model(experiment_group, model_params)
+    model.summary()
 
     # --------------------------------------------------------------
     # 3. Compile model
@@ -217,9 +218,15 @@ def train_CAE(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser = train_utils.parse_minimal_args(parser)
+    parser.add_argument(
+        "--experiment_csv",
+        type=str,
+        default="00_experiments_15_lenvec50_lr0.001.csv",
+        help="Experiment configuration CSV filename under path_csv.",
+    )
     args = parser.parse_args()
 
-    df = get_df_experiment()
+    df = get_df_experiment(args.experiment_csv)
     df_train = df.loc["experiment_group":"batch_size", :]
     if "n_channels" in df.index:
         df_train = pd.concat([df_train, df.loc[["n_channels"], :]], axis=0)
@@ -234,4 +241,5 @@ if __name__ == "__main__":
             exist_ok=True
         )
 
+        print(config)
         train_CAE(**config)

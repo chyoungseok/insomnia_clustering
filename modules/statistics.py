@@ -13,6 +13,10 @@ from statsmodels.stats.multitest import multipletests
 from scipy.stats import mannwhitneyu, ttest_ind
 from pingouin import welch_anova
 import traceback
+try:
+    from tqdm.auto import tqdm
+except:
+    tqdm = None
 
 from modules import load, post_hoc_methods
 
@@ -393,6 +397,89 @@ def chi_square(feature: str, df: pd.DataFrame):
         effect_3group = np.sqrt(chi2 / (n_total * min_dim))
 
     return chi2, p_value, effect_3group
+
+def _resample_by_label(df: pd.DataFrame, random_state=None):
+    samples = []
+    for label in sorted(df['labels'].unique()):
+        df_group = df.loc[df['labels'] == label]
+        if len(df_group) == 0:
+            continue
+        samples.append(df_group.sample(n=len(df_group), replace=True, random_state=random_state))
+    if len(samples) == 0:
+        return df.iloc[0:0, :].copy()
+    return pd.concat(samples, axis=0).reset_index(drop=True)
+
+def _percentile_ci(values: list, ci_level=0.95):
+    values = np.asarray(values, dtype=float)
+    values = values[~np.isnan(values)]
+    if len(values) == 0:
+        return np.nan, np.nan, 0
+    alpha = 1 - ci_level
+    lower = np.percentile(values, 100 * (alpha / 2))
+    upper = np.percentile(values, 100 * (1 - alpha / 2))
+    return lower, upper, len(values)
+
+def _bootstrap_3group_effect_ci(df: pd.DataFrame, feature: str, type_anova: str, covariates: list, n_boot=1000, ci_level=0.95, seed=42, show_progress=False):
+    rng = np.random.default_rng(seed)
+    effects = []
+    iterator = range(n_boot)
+    if show_progress and (tqdm is not None):
+        iterator = tqdm(iterator, total=n_boot, desc=f"CI-3g {feature} ({type_anova})", leave=True)
+    for _ in iterator:
+        df_boot = _resample_by_label(df, random_state=int(rng.integers(0, 2**32 - 1)))
+        try:
+            if type_anova == 'lm_ancova':
+                _, _, effect = lm_ancova(feature=feature, covariates=covariates, df=df_boot)
+            elif type_anova == 'welch':
+                anova = welch_anova(dv=feature, between='labels', data=df_boot)
+                effect = cal_welch_eta2(F=anova.loc[0, 'F'], ddof1=anova.loc[0, 'ddof1'], ddof2=anova.loc[0, 'ddof2'])
+            elif type_anova == 'kruskal':
+                list_data_boot = [df_boot.loc[df_boot.labels == i, feature] for i in sorted(df_boot.labels.unique())]
+                if len(list_data_boot) < 2:
+                    effect = np.nan
+                else:
+                    kruskal = stats.kruskal(*list_data_boot)
+                    effect = cal_kruskal_epsilon2(H=kruskal.statistic, n_total=len(df_boot), k_groups=len(list_data_boot))
+            elif type_anova == 'chi_square':
+                _, _, effect = chi_square(feature=feature, df=df_boot)
+            else:
+                effect = np.nan
+        except:
+            effect = np.nan
+        effects.append(effect)
+    return _percentile_ci(effects, ci_level=ci_level)
+
+def _odds_ratio_pair(df_pair: pd.DataFrame, feature: str, group2: int, covariates: list):
+    df_pair = pd.get_dummies(df_pair, columns=['labels'], drop_first=True)
+    model = sm.Logit(df_pair[feature], df_pair[['labels_%d' % group2] + covariates])
+    result = model.fit(disp=0)
+    return abs(np.exp(result.params['labels_%d' % group2]))
+
+def _bootstrap_pair_effect_ci(df: pd.DataFrame, feature: str, group1: int, group2: int, pair_effect_type: str, covariates: list, n_boot=1000, ci_level=0.95, seed=42, show_progress=False):
+    rng = np.random.default_rng(seed)
+    effects = []
+    iterator = range(n_boot)
+    if show_progress and (tqdm is not None):
+        iterator = tqdm(iterator, total=n_boot, desc=f"CI-{group1}vs{group2} {feature} ({pair_effect_type})", leave=False)
+    for _ in iterator:
+        df1 = df.loc[df['labels'] == group1].sample(n=(df['labels'] == group1).sum(), replace=True, random_state=int(rng.integers(0, 2**32 - 1)))
+        df2 = df.loc[df['labels'] == group2].sample(n=(df['labels'] == group2).sum(), replace=True, random_state=int(rng.integers(0, 2**32 - 1)))
+        try:
+            if pair_effect_type == 'cohens_d':
+                effect = cal_cohens_d(df1[feature], df2[feature])
+            elif pair_effect_type == 'hedges_g':
+                effect = cal_hedges_g(df1[feature], df2[feature])
+            elif pair_effect_type == 'cliffs_delta':
+                effect = cal_cliffs_delta(df1[feature], df2[feature])
+            elif pair_effect_type == 'odds_ratio':
+                df_pair = pd.concat([df1, df2], axis=0).copy()
+                effect = _odds_ratio_pair(df_pair=df_pair, feature=feature, group2=group2, covariates=covariates)
+            else:
+                effect = np.nan
+        except:
+            effect = np.nan
+        effects.append(effect)
+    return _percentile_ci(effects, ci_level=ci_level)
 def cal_mean_std(df: pd.DataFrame, feature: str):
     unique_labels = np.sort(df.labels.unique())
 
@@ -504,14 +591,20 @@ def gen_post_hoc_str(_ancova):
                                    alphabets_temp[sorted_arg][1])
     return post_hoc_str
 
-def gen_df_stat(df, df_type="demo", covariates=[], force_lm_anova=False, force_kruskal=False, force_normality=False, posthoc_method='scheffe', p_correct_method='FDR'):
+def gen_df_stat(df, df_type="demo", covariates=[], force_lm_anova=False, force_kruskal=False, force_normality=False, posthoc_method='scheffe', p_correct_method='FDR',
+                compute_effect_ci=True, effect_ci_level=0.95, effect_ci_n_boot=1000, effect_ci_seed=42, show_ci_progress=True):
     """
     df_type ('demo', 'thick', 'bai', 'snsb')
     """
     categorical_variables = ['sex', 'is_paradoxical_1', 'is_paradoxical_2', 'is_paradoxical_3', 'is_paradoxical_4']
     stat_demo = pd.DataFrame(columns=['A', 'B', 'C', 'Statistic', 'F', 'p', ' ', 'Post hoc', 'type_posthoc',
-                                      'effect_3group', 'effect_3group_type',
-                                      'effect_0_vs_1', 'effect_1_vs_2', 'effect_0_vs_2', 'effect_pair_type'])
+                                      'effect_3group', 'effect_3group_type', 'effect_3group_ci_low', 'effect_3group_ci_high',
+                                      'effect_0_vs_1', 'effect_0_vs_1_ci_low', 'effect_0_vs_1_ci_high',
+                                      'effect_1_vs_2', 'effect_1_vs_2_ci_low', 'effect_1_vs_2_ci_high',
+                                      'effect_0_vs_2', 'effect_0_vs_2_ci_low', 'effect_0_vs_2_ci_high',
+                                      'effect_pair_type', 'effect_ci_method', 'effect_ci_level',
+                                      'effect_ci_n_boot', 'effect_ci_valid_boot'
+                                      ])
 
     if 'demo' in df_type.lower():
         col_start = 2; col_end = -1
@@ -562,6 +655,46 @@ def gen_df_stat(df, df_type="demo", covariates=[], force_lm_anova=False, force_k
         stat_demo.loc[feature, 'effect_1_vs_2'] = pair_effect_posthoc[1]
         stat_demo.loc[feature, 'effect_0_vs_2'] = pair_effect_posthoc[2]
         stat_demo.loc[feature, 'effect_pair_type'] = getattr(_ancova, 'pair_effect_type', '')
+        if compute_effect_ci:
+            ci3_low, ci3_high, valid3 = _bootstrap_3group_effect_ci(df=df_feature, feature=feature,
+                                                                    type_anova=_ancova.type_anova,
+                                                                    covariates=getattr(_ancova, 'covariates', []),
+                                                                    n_boot=effect_ci_n_boot,
+                                                                    ci_level=effect_ci_level,
+                                                                    seed=effect_ci_seed,
+                                                                    show_progress=show_ci_progress)
+            stat_demo.loc[feature, 'effect_3group_ci_low'] = ci3_low
+            stat_demo.loc[feature, 'effect_3group_ci_high'] = ci3_high
+
+            valid_counts = [valid3]
+            ci_pairs = []
+            for group1, group2 in [(0, 1), (1, 2), (0, 2)]:
+                ci_low, ci_high, valid_pair = _bootstrap_pair_effect_ci(df=df_feature, feature=feature,
+                                                                        group1=group1, group2=group2,
+                                                                        pair_effect_type=getattr(_ancova, 'pair_effect_type', ''),
+                                                                        covariates=getattr(_ancova, 'covariates', []),
+                                                                        n_boot=effect_ci_n_boot,
+                                                                        ci_level=effect_ci_level,
+                                                                        seed=effect_ci_seed,
+                                                                        show_progress=show_ci_progress)
+                ci_pairs.append((ci_low, ci_high))
+                valid_counts.append(valid_pair)
+
+            stat_demo.loc[feature, 'effect_0_vs_1_ci_low'] = ci_pairs[0][0]
+            stat_demo.loc[feature, 'effect_0_vs_1_ci_high'] = ci_pairs[0][1]
+            stat_demo.loc[feature, 'effect_1_vs_2_ci_low'] = ci_pairs[1][0]
+            stat_demo.loc[feature, 'effect_1_vs_2_ci_high'] = ci_pairs[1][1]
+            stat_demo.loc[feature, 'effect_0_vs_2_ci_low'] = ci_pairs[2][0]
+            stat_demo.loc[feature, 'effect_0_vs_2_ci_high'] = ci_pairs[2][1]
+            stat_demo.loc[feature, 'effect_ci_method'] = 'bootstrap_percentile'
+            stat_demo.loc[feature, 'effect_ci_level'] = effect_ci_level
+            stat_demo.loc[feature, 'effect_ci_n_boot'] = effect_ci_n_boot
+            stat_demo.loc[feature, 'effect_ci_valid_boot'] = int(min(valid_counts))
+        else:
+            stat_demo.loc[feature, 'effect_ci_method'] = ''
+            stat_demo.loc[feature, 'effect_ci_level'] = ''
+            stat_demo.loc[feature, 'effect_ci_n_boot'] = ''
+            stat_demo.loc[feature, 'effect_ci_valid_boot'] = ''
         dic_posthoc_p[feature] = _ancova.p_posthoc
         dic_posthoc_str[feature] = _ancova.post_hoc_str
 
@@ -569,9 +702,17 @@ def gen_df_stat(df, df_type="demo", covariates=[], force_lm_anova=False, force_k
     stat_demo['p'] = stat_demo['p'].apply(lambda x: f"{x:.3f}") # 'p' column??????뤿연 ?諭?????땾???袁⑥삋?癒?봺繹먮슣? 癰귣똻肉э쭪?野?formatting
 
     stat_demo['effect_3group'] = pd.to_numeric(stat_demo['effect_3group'], errors='coerce').apply(lambda x: f"{x:.3f}" if pd.notna(x) else '')
+    stat_demo['effect_3group_ci_low'] = pd.to_numeric(stat_demo['effect_3group_ci_low'], errors='coerce').apply(lambda x: f"{x:.3f}" if pd.notna(x) else '')
+    stat_demo['effect_3group_ci_high'] = pd.to_numeric(stat_demo['effect_3group_ci_high'], errors='coerce').apply(lambda x: f"{x:.3f}" if pd.notna(x) else '')
     stat_demo['effect_0_vs_1'] = pd.to_numeric(stat_demo['effect_0_vs_1'], errors='coerce').apply(lambda x: f"{x:.3f}" if pd.notna(x) else '')
+    stat_demo['effect_0_vs_1_ci_low'] = pd.to_numeric(stat_demo['effect_0_vs_1_ci_low'], errors='coerce').apply(lambda x: f"{x:.3f}" if pd.notna(x) else '')
+    stat_demo['effect_0_vs_1_ci_high'] = pd.to_numeric(stat_demo['effect_0_vs_1_ci_high'], errors='coerce').apply(lambda x: f"{x:.3f}" if pd.notna(x) else '')
     stat_demo['effect_1_vs_2'] = pd.to_numeric(stat_demo['effect_1_vs_2'], errors='coerce').apply(lambda x: f"{x:.3f}" if pd.notna(x) else '')
+    stat_demo['effect_1_vs_2_ci_low'] = pd.to_numeric(stat_demo['effect_1_vs_2_ci_low'], errors='coerce').apply(lambda x: f"{x:.3f}" if pd.notna(x) else '')
+    stat_demo['effect_1_vs_2_ci_high'] = pd.to_numeric(stat_demo['effect_1_vs_2_ci_high'], errors='coerce').apply(lambda x: f"{x:.3f}" if pd.notna(x) else '')
     stat_demo['effect_0_vs_2'] = pd.to_numeric(stat_demo['effect_0_vs_2'], errors='coerce').apply(lambda x: f"{x:.3f}" if pd.notna(x) else '')
+    stat_demo['effect_0_vs_2_ci_low'] = pd.to_numeric(stat_demo['effect_0_vs_2_ci_low'], errors='coerce').apply(lambda x: f"{x:.3f}" if pd.notna(x) else '')
+    stat_demo['effect_0_vs_2_ci_high'] = pd.to_numeric(stat_demo['effect_0_vs_2_ci_high'], errors='coerce').apply(lambda x: f"{x:.3f}" if pd.notna(x) else '')
     # ====== Correction for multiple comparison ======
     # p-value ?귐딅뮞??
     p_values = stat_demo['p'].astype(float)
@@ -629,14 +770,31 @@ def gen_df_stat(df, df_type="demo", covariates=[], force_lm_anova=False, force_k
     stat_demo.loc['N', 'type_posthoc'] = ''
     stat_demo.loc['N', 'effect_3group'] = ''
     stat_demo.loc['N', 'effect_3group_type'] = ''
+    stat_demo.loc['N', 'effect_3group_ci_low'] = ''
+    stat_demo.loc['N', 'effect_3group_ci_high'] = ''
     stat_demo.loc['N', 'effect_0_vs_1'] = ''
+    stat_demo.loc['N', 'effect_0_vs_1_ci_low'] = ''
+    stat_demo.loc['N', 'effect_0_vs_1_ci_high'] = ''
     stat_demo.loc['N', 'effect_1_vs_2'] = ''
+    stat_demo.loc['N', 'effect_1_vs_2_ci_low'] = ''
+    stat_demo.loc['N', 'effect_1_vs_2_ci_high'] = ''
     stat_demo.loc['N', 'effect_0_vs_2'] = ''
+    stat_demo.loc['N', 'effect_0_vs_2_ci_low'] = ''
+    stat_demo.loc['N', 'effect_0_vs_2_ci_high'] = ''
     stat_demo.loc['N', 'effect_pair_type'] = ''
+    stat_demo.loc['N', 'effect_ci_method'] = ''
+    stat_demo.loc['N', 'effect_ci_level'] = ''
+    stat_demo.loc['N', 'effect_ci_n_boot'] = ''
+    stat_demo.loc['N', 'effect_ci_valid_boot'] = ''
     stat_demo = pd.concat([stat_demo.loc[['N'], :], stat_demo.iloc[:-1, :]])
     stat_demo = stat_demo.loc[:, ['C', 'A', 'B', 'Statistic', 'p', 'p_corrected', '  ',
                                   'effect_3group', 'effect_3group_type',
+                                  'effect_3group_ci_low', 'effect_3group_ci_high',
                                   'effect_0_vs_1', 'effect_1_vs_2', 'effect_0_vs_2', 'effect_pair_type',
+                                  'effect_0_vs_1_ci_low', 'effect_0_vs_1_ci_high',
+                                  'effect_1_vs_2_ci_low', 'effect_1_vs_2_ci_high',
+                                  'effect_0_vs_2_ci_low', 'effect_0_vs_2_ci_high',
+                                  'effect_ci_method', 'effect_ci_level', 'effect_ci_n_boot', 'effect_ci_valid_boot',
                                   'Post hoc']]
 
     # Sex mean揶???볥┛

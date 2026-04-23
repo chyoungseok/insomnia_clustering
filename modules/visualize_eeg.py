@@ -52,14 +52,14 @@ class EEG_storage():
         df_demo_HI_psm = _demo_summary.df_demo_HI_psm.copy()
 
         session_dic_posthoc_p = {}
-        list_df_eeg_out = []
+        dict_df_eeg_out = {}
         for temp_df, statistic_fname in tqdm(zip(list_df_eeg, list_statistic_fname)):
-            # if statistic_fname == 'statistic_Half':
-            #     pass
+            if not statistic_fname in ['statistic_WholeNight', 'statistic_WholeNight_Stage', 'statistic_Quartile_Stage']:
+                continue
             df_eeg = temp_df
             df_eeg = df_eeg.loc[df_demo_HI_psm.index, :]
             df_eeg.loc[df_demo_HI_psm.index, 'labels'] = df_demo_HI_psm.labels
-            list_df_eeg_out.append(df_eeg.copy())
+            dict_df_eeg_out[statistic_fname.split('statistic_')[1]] = df_eeg.copy()
             df_eeg.loc[df_demo_HI_psm.index, 'sex'] = df_demo_HI_psm.sex
             df_eeg.loc[df_demo_HI_psm.index, 'age'] = df_demo_HI_psm.age
             df_eeg.loc[df_demo_HI_psm.index, 'AHI'] = df_demo_HI_psm.AHI
@@ -82,12 +82,12 @@ class EEG_storage():
         # self.df_BandPower_Quartile = df_BandPower_Quartile
         # self.df_BandPower_Quartile_Stage = df_BandPower_Quartile_Stage
         
-        self.df_BandPower_Half = list_df_eeg_out[0]
-        self.df_BandPower_Half_Stage = list_df_eeg_out[1]
-        self.df_BandPower_WholeNight = list_df_eeg_out[2]
-        self.df_BandPower_WholeNight_Stage = list_df_eeg_out[3]
-        self.df_BandPower_Quartile = list_df_eeg_out[4]
-        self.df_BandPower_Quartile_Stage = list_df_eeg_out[5]
+        # self.df_BandPower_Half = dict_df_eeg_out['Half']
+        # self.df_BandPower_Half_Stage = dict_df_eeg_out['Half_Stage']
+        self.df_BandPower_WholeNight = dict_df_eeg_out['WholeNight']
+        self.df_BandPower_WholeNight_Stage = dict_df_eeg_out['WholeNight_Stage']
+        # self.df_BandPower_Quartile = dict_df_eeg_out['Quartile']
+        self.df_BandPower_Quartile_Stage = dict_df_eeg_out['Quartile_Stage']
         
         
         self.df_demo_HI_psm = df_demo_HI_psm
@@ -166,7 +166,7 @@ class EEG_storage():
                             palette=new_palette,
                             )
 
-        for line in ax.lines:  # ax.lines는 그래프의 Line2D 객체들의 리스트
+        for line in ax.lines:  # ax.lines는 그래프p의 Line2D 객체들의 리스트
             line.set_linestyle('--')
             line.set_linewidth(3)
 
